@@ -235,7 +235,7 @@ class SIPClient {
         authHeader.opaque = authParams.opaque;
       }
 
-      headers.authorization = authHeader;
+      headers.authorization = [authHeader];
     }
 
     const request = {
@@ -264,21 +264,27 @@ class SIPClient {
       const wwwAuth = response.headers["www-authenticate"] || 
                       response.headers["proxy-authenticate"];
       
-      if (wwwAuth) {
+      if (wwwAuth && wwwAuth[0]) {
+        // wwwAuth is an array, get the first element
+        const authChallenge = wwwAuth[0];
         const authParams = {
-          realm: wwwAuth.realm,
-          nonce: wwwAuth.nonce,
-          algorithm: wwwAuth.algorithm,
-          qop: wwwAuth.qop,
-          opaque: wwwAuth.opaque,
+          realm: authChallenge.realm,
+          nonce: authChallenge.nonce,
+          algorithm: authChallenge.algorithm,
+          qop: authChallenge.qop,
+          opaque: authChallenge.opaque,
         };
         
         console.log("Realm:", authParams.realm);
+        console.log("Nonce:", authParams.nonce);
         console.log("Algorithm:", authParams.algorithm || "MD5");
         console.log("Re-sending with credentials...");
         
         // Re-send with authentication
         this.register(true, authParams);
+      } else {
+        console.error("No authentication challenge found in response");
+        console.log("www-authenticate header:", wwwAuth);
       }
     } else if (response.status === 200) {
       // Registration successful

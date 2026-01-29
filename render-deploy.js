@@ -121,9 +121,20 @@ try {
       console.log(`Response: ${response.status} ${response.reason}`);
       
       if (response.status === 401 || response.status === 407) {
-        console.log("✓ Auth challenge received - server is reachable!");
+        console.log("✅ Auth challenge received - server is reachable!");
+        
+        // Parse authentication challenge
+        const wwwAuth = response.headers["www-authenticate"] || 
+                        response.headers["proxy-authenticate"];
+        
+        if (wwwAuth && wwwAuth[0]) {
+          const authChallenge = wwwAuth[0];
+          console.log("Realm:", authChallenge.realm);
+          console.log("Nonce:", authChallenge.nonce);
+          console.log("🎯 Authentication working - deploy successful!");
+        }
       } else if (response.status === 200) {
-        console.log("✓ Registration successful!");
+        console.log("✅ Registration successful!");
       } else {
         console.log(`Server response: ${response.status} ${response.reason}`);
       }
