@@ -203,6 +203,19 @@ class SIPClient {
       const cnonce = generateTag();
       const qop = authParams.qop || null;
 
+      console.log("=== DEBUG AUTH PARAMS ===");
+      console.log("Username:", this.config.sipUsername);
+      console.log("Realm:", authParams.realm);
+      console.log("Password:", this.config.sipPassword ? "[HIDDEN]" : "MISSING");
+      console.log("Method:", "REGISTER");
+      console.log("URI:", uri);
+      console.log("Nonce:", authParams.nonce);
+      console.log("QOP:", qop);
+      console.log("NC:", nc);
+      console.log("CNonce:", cnonce);
+      console.log("Algorithm:", authParams.algorithm);
+      console.log("========================");
+
       const response = calculateDigest(
         this.config.sipUsername,
         authParams.realm,
@@ -215,6 +228,8 @@ class SIPClient {
         cnonce
       );
 
+      console.log("Calculated digest response:", response);
+
       const authHeader = {
         scheme: "Digest",
         username: this.config.sipUsername,
@@ -222,7 +237,7 @@ class SIPClient {
         nonce: authParams.nonce,
         uri: uri,
         response: response,
-        algorithm: authParams.algorithm || "MD5",
+        algorithm: (authParams.algorithm || "MD5").toUpperCase(),
       };
 
       if (qop) {
@@ -270,7 +285,7 @@ class SIPClient {
         const authParams = {
           realm: authChallenge.realm,
           nonce: authChallenge.nonce,
-          algorithm: authChallenge.algorithm,
+          algorithm: authChallenge.algorithm || "MD5",
           qop: authChallenge.qop,
           opaque: authChallenge.opaque,
         };
@@ -280,8 +295,10 @@ class SIPClient {
         console.log("Algorithm:", authParams.algorithm || "MD5");
         console.log("Re-sending with credentials...");
         
-        // Re-send with authentication
-        this.register(true, authParams);
+        // Small delay before re-sending with auth to avoid timing issues
+        setTimeout(() => {
+          this.register(true, authParams);
+        }, 100);
       } else {
         console.error("No authentication challenge found in response");
         console.log("www-authenticate header:", wwwAuth);
