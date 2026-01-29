@@ -1,0 +1,407 @@
+const sip = require("sip");
+const crypto = require("crypto");
+const config = require("./config");
+
+// Utility functions
+function generateCallId() {
+  return crypto.randomBytes(16).toString("hex");
+}
+
+function generateTag() {
+  return crypto.randomBytes(8).toString("hex");
+}
+
+function calculateDigest(username, realm, password, method, uri, nonce, qop, nc, cnonce) {
+  const ha1 = crypto
+    .createHash("md5")
+    .update(`${username}:${realm}:${password}`)
+    .digest("hex");
+  
+  const ha2 = crypto
+    .createHash("md5")
+    .update(`${method}:${uri}`)
+    .digest("hex");
+  
+  let response;
+  if (qop) {
+    response = crypto
+      .createHash("md5")
+      .update(`${ha1}:${nonce}:${nc}:${cnonce}:${qop}:${ha2}`)
+      .digest("hex");
+  } else {
+    response = crypto
+      .createHash("md5")
+      .update(`${ha1}:${nonce}:${ha2}`)
+      .digest("hex");
+  }
+  
+  return response;
+}
+
+class SIPClient {
+  constructor(config) {
+    this.config = config;
+    this.callId = generateCallId();
+    this.fromTag = generateTag();
+    this.cseq = 1;
+    this.registrationInterval = null;
+    this.sipStack = null;
+    this.registered = false;
+  }
+
+  getLocalIp() {
+    const os = require("os");
+    const interfaces = os.networkInterfaces();
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name]) {
+        if (iface.family === "IPv4" && !iface.internal) {
+          return iface.address;
+        }
+      }
+    }
+    return "127.0.0.1";
+  }
+
+  start() {
+    console.log("=== SIP Registration Client ===");
+    console.log(`Display Name: ${this.config.displayName}`);
+    console.log(`Extension: ${this.config.extension}`);
+    console.log(`SIP Domain: ${this.config.sipDomain}`);
+    console.log(`SIP Username: ${this.config.sipUsername}`);
+    console.log("================================\n");
+
+    // Create SIP stack
+    const sipConfig = {
+      port: this.config.localPort,
+      address: this.config.localIp,
+      publicAddress: this.config.localIp,
+      hostname: require("os").hostname(),
+      logger: {
+        send: (message, address) => {
+          console.log("=== SENDING SIP MESSAGE ===");
+          console.log(`To: ${address.address}:${address.port}`);
+          console.log(message);
+          console.log("===========================\n");
+        },
+        recv: (message, address) => {
+          console.log("=== RECEIVED SIP MESSAGE ===");
+          console.log(`From: ${address.address}:${address.port}`);
+          console.log(message);
+          console.log("============================\n");
+        },
+        error: (error) => {
+          console.error("=== SIP ERROR ===");
+          console.error(error);
+          console.error("=================\n");
+        }
+      }
+    };
+    
+    try {
+      // sip.start() starts the SIP server and handles incoming requests
+      sip.start(sipConfig, (request) => this.handleIncomingRequest(request));
+      
+      // The sip module itself is used for sending messages
+      this.sipStack = sip;
+      
+      console.log(`Local: ${sipConfig.address}:${sipConfig.port}\n`);
+
+      // Start registration after stack is ready
+      setTimeout(() => {
+        this.register();
+      }, 2000);
+
+    } catch (error) {
+      console.error("Failed to start SIP stack:", error.message);
+      process.exit(1);
+    }
+
+    // Handle process termination
+    process.on("SIGINT", () => this.shutdown());
+    process.on("SIGTERM", () => this.shutdown());
+  }
+
+  handleIncomingRequest(request) {
+    console.log(`\n=== Incoming ${request.method} ===`);
+    
+    if (!this.sipStack) {
+      console.error("SIP stack not available to handle incoming request");
+      return;
+    }
+    
+    switch (request.method) {
+      case "OPTIONS":
+        // Respond to OPTIONS ping (keepalive)
+        this.sipStack.send(
+          sip.makeResponse(request, 200, "OK", {
+            headers: {
+              allow: "INVITE, ACK, CANCEL, BYE, OPTIONS, REGISTER",
+              accept: "application/sdp",
+            },
+          })
+        );
+        console.log("Responded to OPTIONS keepalive");
+        break;
+      
+      case "NOTIFY":
+        // Acknowledge NOTIFY
+        this.sipStack.send(sip.makeResponse(request, 200, "OK"));
+        console.log("Acknowledged NOTIFY");
+        break;
+      
+      default:
+        console.log(`Unhandled method: ${request.method}`);
+    }
+  }
+
+  register(withAuth = false, authParams = null) {
+    if (!this.sipStack) {
+      console.error("SIP stack not initialized. Cannot register.");
+      return;
+    }
+
+    const uri = `sip:${this.config.sipDomain}`;
+    const fromUri = `sip:${this.config.sipUsername}@${this.config.sipDomain}`;
+    const toUri = `sip:${this.config.sipUsername}@${this.config.sipDomain}`;
+    
+    // Use local IP and port from config
+    const localIp = this.config.localIp === "0.0.0.0" ? this.getLocalIp() : this.config.localIp;
+    const contactUri = `sip:${this.config.sipUsername}@${localIp}:${this.config.localPort}`;
+
+    const headers = {
+      to: { uri: toUri },
+      from: { 
+        uri: fromUri, 
+        params: { tag: this.fromTag },
+        name: this.config.displayName 
+      },
+      "call-id": this.callId,
+      cseq: { method: "REGISTER", seq: this.cseq++ },
+      via: [{
+        version: "2.0",
+        protocol: "UDP",
+        host: localIp,
+        port: this.config.localPort,
+        params: {
+          branch: `z9hG4bK${crypto.randomBytes(8).toString('hex')}`
+        }
+      }],
+      "max-forwards": 70,
+      contact: [
+        { 
+          uri: contactUri, 
+          params: { expires: this.config.registerExpires }
+        }
+      ],
+      expires: this.config.registerExpires,
+      "user-agent": "Node.js SIP Client v1.0",
+    };
+
+    // Add authentication if we received a challenge
+    if (withAuth && authParams) {
+      const nc = "00000001";
+      const cnonce = generateTag();
+      const qop = authParams.qop || null;
+
+      const response = calculateDigest(
+        this.config.sipUsername,
+        authParams.realm,
+        this.config.sipPassword,
+        "REGISTER",
+        uri,
+        authParams.nonce,
+        qop,
+        nc,
+        cnonce
+      );
+
+      const authHeader = {
+        scheme: "Digest",
+        username: this.config.sipUsername,
+        realm: authParams.realm,
+        nonce: authParams.nonce,
+        uri: uri,
+        response: response,
+        algorithm: authParams.algorithm || "MD5",
+      };
+
+      if (qop) {
+        authHeader.qop = qop;
+        authHeader.nc = nc;
+        authHeader.cnonce = cnonce;
+      }
+
+      if (authParams.opaque) {
+        authHeader.opaque = authParams.opaque;
+      }
+
+      headers.authorization = authHeader;
+    }
+
+    const request = {
+      method: "REGISTER",
+      uri: uri,
+      version: "2.0",
+      headers: headers,
+    };
+
+    console.log(`\n=== Sending REGISTER ${withAuth ? '(with auth)' : '(initial)'} ===`);
+    console.log(`To: ${this.config.sipUsername}@${this.config.sipDomain}`);
+    console.log(`Via: ${localIp}:${this.config.localPort}`);
+
+    this.sipStack.send(request, (response) => {
+      this.handleRegisterResponse(response, authParams);
+    });
+  }
+
+  handleRegisterResponse(response, previousAuthParams) {
+    console.log(`\n=== Response: ${response.status} ${response.reason} ===`);
+
+    if (response.status === 401 || response.status === 407) {
+      // Authentication required
+      console.log("Authentication challenge received");
+      
+      const wwwAuth = response.headers["www-authenticate"] || 
+                      response.headers["proxy-authenticate"];
+      
+      if (wwwAuth) {
+        const authParams = {
+          realm: wwwAuth.realm,
+          nonce: wwwAuth.nonce,
+          algorithm: wwwAuth.algorithm,
+          qop: wwwAuth.qop,
+          opaque: wwwAuth.opaque,
+        };
+        
+        console.log("Realm:", authParams.realm);
+        console.log("Algorithm:", authParams.algorithm || "MD5");
+        console.log("Re-sending with credentials...");
+        
+        // Re-send with authentication
+        this.register(true, authParams);
+      }
+    } else if (response.status === 200) {
+      // Registration successful
+      this.registered = true;
+      console.log("✓ Registration successful!");
+      console.log(`✓ Extension ${this.config.extension} is now registered`);
+      
+      // Parse expires from response
+      let expires = this.config.registerExpires;
+      if (response.headers.contact && response.headers.contact[0]) {
+        const contactExpires = response.headers.contact[0].params?.expires;
+        if (contactExpires) {
+          expires = parseInt(contactExpires);
+        }
+      } else if (response.headers.expires) {
+        expires = parseInt(response.headers.expires);
+      }
+      
+      console.log(`✓ Registration expires in ${expires} seconds`);
+      
+      // Set up re-registration before expiry
+      if (this.registrationInterval) {
+        clearInterval(this.registrationInterval);
+      }
+      
+      const reregisterTime = expires * this.config.reRegisterMultiplier * 1000;
+      console.log(`✓ Will re-register in ${Math.floor(reregisterTime / 1000)} seconds`);
+      console.log("\n>>> SIP Extension is ready and registered! <<<\n");
+      
+      this.registrationInterval = setInterval(() => {
+        console.log("\n--- Refreshing registration ---");
+        this.register();
+      }, reregisterTime);
+      
+    } else if (response.status >= 400) {
+      console.error(`✗ Registration failed: ${response.status} ${response.reason}`);
+      
+      if (response.headers["warning"]) {
+        console.error("Warning:", response.headers["warning"]);
+      }
+      
+      // Common error codes
+      switch (response.status) {
+        case 403:
+          console.error("Reason: Forbidden - Check your credentials");
+          break;
+        case 404:
+          console.error("Reason: Not Found - Extension may not exist");
+          break;
+        case 408:
+          console.error("Reason: Request Timeout - Check network connectivity");
+          break;
+        case 423:
+          console.error("Reason: Interval Too Brief - Registration expires too soon");
+          break;
+        case 480:
+          console.error("Reason: Temporarily Unavailable - PBX may be busy");
+          break;
+        case 486:
+          console.error("Reason: Busy Here");
+          break;
+        case 503:
+          console.error("Reason: Service Unavailable - PBX may be down");
+          break;
+      }
+      
+      // Retry after delay for temporary errors
+      if (response.status >= 500 || response.status === 408) {
+        console.log("Will retry in 30 seconds...");
+        setTimeout(() => this.register(), 30000);
+      }
+    } else {
+      console.log(`Unexpected response: ${response.status} ${response.reason}`);
+    }
+  }
+
+  shutdown() {
+    console.log("\n\n=== Shutting down ===");
+    
+    if (this.registrationInterval) {
+      clearInterval(this.registrationInterval);
+    }
+    
+    if (this.registered && this.sipStack) {
+      console.log("Unregistering extension...");
+      
+      // Send unregister (expires: 0)
+      const uri = `sip:${this.config.sipDomain}`;
+      const fromUri = `sip:${this.config.sipUsername}@${this.config.sipDomain}`;
+      const toUri = `sip:${this.config.sipUsername}@${this.config.sipDomain}`;
+      const localIp = this.config.localIp === "0.0.0.0" ? this.getLocalIp() : this.config.localIp;
+      const contactUri = `sip:${this.config.sipUsername}@${localIp}:${this.config.localPort}`;
+
+      this.sipStack.send({
+        method: "REGISTER",
+        uri: uri,
+        headers: {
+          to: { uri: toUri },
+          from: { uri: fromUri, params: { tag: this.fromTag } },
+          "call-id": this.callId,
+          cseq: { method: "REGISTER", seq: this.cseq++ },
+          contact: [{ uri: contactUri, params: { expires: 0 } }],
+          expires: 0,
+        },
+      }, (response) => {
+        if (response.status === 200) {
+          console.log("✓ Unregistered successfully");
+        }
+        console.log("Goodbye!");
+        process.exit(0);
+      });
+      
+      setTimeout(() => {
+        console.log("Timeout waiting for unregister. Exiting...");
+        process.exit(0);
+      }, 3000);
+    } else {
+      console.log("Not registered or SIP stack unavailable. Exiting...");
+      process.exit(0);
+    }
+  }
+}
+
+// Create and start the client
+const client = new SIPClient(config);
+client.start();

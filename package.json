@@ -1,0 +1,25 @@
+{
+  "name": "sip-registration-client",
+  "version": "1.0.0",
+  "description": "SIP Client for registering extension with Yeastar PBX",
+  "main": "sip-register.js",
+  "scripts": {
+    "start": "node sip-register.js",
+    "dev": "nodemon sip-register.js",
+    "test": "node test-sip.js"
+  },
+  "dependencies": {
+    "sip": "^0.0.6"
+  },
+  "keywords": [
+    "sip",
+    "voip",
+    "pbx",
+    "yeastar"
+  ],
+  "author": "",
+  "license": "ISC",
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}
