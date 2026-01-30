@@ -11,6 +11,10 @@ function generateTag() {
   return crypto.randomBytes(8).toString("hex");
 }
 
+function generateBranch() {
+  return `z9hG4bK${crypto.randomBytes(8).toString('hex')}`;
+}
+
 function calculateDigest(username, realm, password, method, uri, nonce, qop, nc, cnonce) {
   const ha1 = crypto
     .createHash("md5")
@@ -43,10 +47,12 @@ class SIPClient {
     this.config = config;
     this.callId = generateCallId();
     this.fromTag = generateTag();
+    this.toTag = null;
     this.cseq = 1;
     this.registrationInterval = null;
     this.sipStack = null;
     this.registered = false;
+    this.viaBranch = generateBranch();
   }
 
   getLocalIp() {
@@ -129,6 +135,11 @@ class SIPClient {
       return;
     }
     
+    // Extract to-tag from incoming requests for proper dialog handling
+    if (request.headers.to && request.headers.to.params && request.headers.to.params.tag) {
+      this.toTag = request.headers.to.params.tag;
+    }
+    
     switch (request.method) {
       case "OPTIONS":
         // Respond to OPTIONS ping (keepalive)
@@ -168,6 +179,18 @@ class SIPClient {
     const localIp = this.config.localIp === "0.0.0.0" ? this.getLocalIp() : this.config.localIp;
     const contactUri = `sip:${this.config.sipUsername}@${localIp}:${this.config.localPort}`;
 
+    // Build Via header
+    const viaHeader = {
+      version: "2.0",
+      protocol: "UDP",
+      host: localIp,
+      port: this.config.localPort,
+      params: {
+        branch: this.viaBranch,
+        rport: true
+      }
+    };
+
     const headers = {
       to: { uri: toUri },
       from: { 
@@ -176,16 +199,8 @@ class SIPClient {
         name: this.config.displayName 
       },
       "call-id": this.callId,
-      cseq: { method: "REGISTER", seq: this.cseq++ },
-      via: [{
-        version: "2.0",
-        protocol: "UDP",
-        host: localIp,
-        port: this.config.localPort,
-        params: {
-          branch: `z9hG4bK${crypto.randomBytes(8).toString('hex')}`
-        }
-      }],
+      cseq: { method: "REGISTER", seq: this.cseq },
+      via: [viaHeader],
       "max-forwards": 70,
       contact: [
         { 
@@ -249,13 +264,22 @@ class SIPClient {
     console.log(`To: ${this.config.sipUsername}@${this.config.sipDomain}`);
     console.log(`Via: ${localIp}:${this.config.localPort}`);
 
+    // Only increment CSeq after successfully sending a request
     this.sipStack.send(request, (response) => {
       this.handleRegisterResponse(response, authParams);
     });
+    
+    // Increment CSeq for next request
+    this.cseq++;
   }
 
   handleRegisterResponse(response, previousAuthParams) {
     console.log(`\n=== Response: ${response.status} ${response.reason} ===`);
+
+    // Extract to-tag from response if present
+    if (response.headers.to && response.headers.to.params && response.headers.to.params.tag) {
+      this.toTag = response.headers.to.params.tag;
+    }
 
     if (response.status === 401 || response.status === 407) {
       // Authentication required
@@ -280,10 +304,11 @@ class SIPClient {
         console.log("Algorithm:", authParams.algorithm || "MD5");
         console.log("Re-sending with credentials...");
         
-        // Small delay before re-sending with auth to avoid timing issues
+        // Delay before re-sending with auth to allow proper processing
+        // Use longer delay to ensure server is ready for authenticated request
         setTimeout(() => {
           this.register(true, authParams);
-        }, 100);
+        }, 500);
       } else {
         console.error("No authentication challenge found in response");
         console.log("www-authenticate header:", wwwAuth);
@@ -337,7 +362,7 @@ class SIPClient {
           console.error("Reason: Not Found - Extension may not exist");
           break;
         case 408:
-          console.error("Reason: Request Timeout - Check network connectivity");
+          console.error("Reason: Request Timeout - Check network connectivity or server load");
           break;
         case 423:
           console.error("Reason: Interval Too Brief - Registration expires too soon");
