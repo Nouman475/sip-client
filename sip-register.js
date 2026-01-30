@@ -1,5 +1,6 @@
 const sip = require("sip");
 const crypto = require("crypto");
+const dgram = require("dgram");
 const config = require("./config");
 
 // Utility functions
@@ -53,6 +54,8 @@ class SIPClient {
     this.sipStack = null;
     this.registered = false;
     this.viaBranch = generateBranch();
+    this.udpSocket = null;
+    this.sipServerAddress = null;
   }
 
   getLocalIp() {
@@ -76,6 +79,12 @@ class SIPClient {
     console.log(`SIP Username: ${this.config.sipUsername}`);
     console.log("================================\n");
 
+    // Create UDP socket for raw SIP message sending
+    this.udpSocket = dgram.createSocket('udp4');
+    this.udpSocket.on('error', (err) => {
+      console.error("UDP Socket Error:", err);
+    });
+
     // Create SIP stack
     const sipConfig = {
       port: this.config.localPort,
@@ -84,6 +93,7 @@ class SIPClient {
       hostname: require("os").hostname(),
       logger: {
         send: (message, address) => {
+          this.sipServerAddress = address; // Store server address for later use
           console.log("=== SENDING SIP MESSAGE ===");
           console.log(`To: ${address.address}:${address.port}`);
           console.log(message);
@@ -163,6 +173,59 @@ class SIPClient {
       default:
         console.log(`Unhandled method: ${request.method}`);
     }
+  }
+
+  buildSIPMessage(headers, method, uri) {
+    let message = `${method} ${uri} SIP/2.0\r\n`;
+    
+    // Via header
+    message += `Via: SIP/2.0/UDP ${headers.via[0].host}:${headers.via[0].port};branch=${headers.via[0].params.branch}\r\n`;
+    
+    // From header
+    message += `From: "${headers.from.name}" <${headers.from.uri}>;tag=${headers.from.params.tag}\r\n`;
+    
+    // To header
+    message += `To: <${headers.to.uri}>\r\n`;
+    
+    // Call-ID
+    message += `Call-ID: ${headers["call-id"]}\r\n`;
+    
+    // CSeq
+    message += `CSeq: ${headers.cseq.seq} ${headers.cseq.method}\r\n`;
+    
+    // Max-Forwards
+    message += `Max-Forwards: ${headers["max-forwards"]}\r\n`;
+    
+    // Contact
+    if (headers.contact && headers.contact[0]) {
+      message += `Contact: <${headers.contact[0].uri}>;expires=${headers.contact[0].params.expires}\r\n`;
+    }
+    
+    // Expires
+    message += `Expires: ${headers.expires}\r\n`;
+    
+    // User-Agent
+    message += `User-Agent: ${headers["user-agent"]}\r\n`;
+    
+    // Authorization header
+    if (headers.authorization && headers.authorization[0]) {
+      const auth = headers.authorization[0];
+      let authStr = `Authorization: Digest username="${auth.username}", realm="${auth.realm}", nonce="${auth.nonce}", uri="${auth.uri}", response="${auth.response}"`;
+      
+      if (auth.algorithm) authStr += `, algorithm=${auth.algorithm}`;
+      if (auth.opaque) authStr += `, opaque="${auth.opaque}"`;
+      if (auth.qop) {
+        authStr += `, qop=${auth.qop}, nc=${auth.nc}, cnonce="${auth.cnonce}"`;
+      }
+      
+      message += authStr + "\r\n";
+    }
+    
+    // Content-Length
+    message += `Content-Length: 0\r\n`;
+    message += `\r\n`;
+    
+    return message;
   }
 
   register(withAuth = false, authParams = null) {
@@ -251,6 +314,28 @@ class SIPClient {
       }
 
       headers.authorization = [authHeader];
+      
+      // Use raw UDP for authenticated request to bypass sip module bugs
+      console.log(`\n=== Sending REGISTER (with auth) ===`);
+      console.log(`To: ${this.config.sipUsername}@${this.config.sipDomain}`);
+      console.log(`Via: ${localIp}:${this.config.localPort}`);
+      
+      const message = this.buildSIPMessage(headers, "REGISTER", uri);
+      console.log("=== SENDING SIP MESSAGE ===");
+      console.log(`Raw message to ${this.sipServerAddress.address}:${this.sipServerAddress.port}`);
+      console.log(message);
+      console.log("===========================\n");
+      
+      const messageBuffer = Buffer.from(message);
+      this.udpSocket.send(messageBuffer, 0, messageBuffer.length, 
+        this.sipServerAddress.port, this.sipServerAddress.address, (err) => {
+        if (err) {
+          console.error("Failed to send authenticated REGISTER:", err);
+        }
+      });
+      
+      this.cseq++;
+      return;
     }
 
     const request = {
@@ -260,11 +345,10 @@ class SIPClient {
       headers: headers,
     };
 
-    console.log(`\n=== Sending REGISTER ${withAuth ? '(with auth)' : '(initial)'} ===`);
+    console.log(`\n=== Sending REGISTER (initial) ===`);
     console.log(`To: ${this.config.sipUsername}@${this.config.sipDomain}`);
     console.log(`Via: ${localIp}:${this.config.localPort}`);
 
-    // Only increment CSeq after successfully sending a request
     this.sipStack.send(request, (response) => {
       this.handleRegisterResponse(response, authParams);
     });
@@ -304,11 +388,10 @@ class SIPClient {
         console.log("Algorithm:", authParams.algorithm || "MD5");
         console.log("Re-sending with credentials...");
         
-        // Delay before re-sending with auth to allow proper processing
-        // Use longer delay to ensure server is ready for authenticated request
+        // Shorter delay for authenticated request since we're using raw UDP now
         setTimeout(() => {
           this.register(true, authParams);
-        }, 500);
+        }, 200);
       } else {
         console.error("No authentication challenge found in response");
         console.log("www-authenticate header:", wwwAuth);
