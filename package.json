@@ -5,8 +5,7 @@
   "main": "sip-register.js",
   "scripts": {
     "start": "node sip-register.js",
-    "dev": "nodemon sip-register.js",
-    "test": "node test-sip.js"
+    "dev": "nodemon sip-register.js"
   },
   "dependencies": {
     "sip": "^0.0.6"

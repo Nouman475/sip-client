@@ -203,19 +203,6 @@ class SIPClient {
       const cnonce = generateTag();
       const qop = authParams.qop || null;
 
-      console.log("=== DEBUG AUTH PARAMS ===");
-      console.log("Username:", this.config.sipUsername);
-      console.log("Realm:", authParams.realm);
-      console.log("Password:", this.config.sipPassword ? "[HIDDEN]" : "MISSING");
-      console.log("Method:", "REGISTER");
-      console.log("URI:", uri);
-      console.log("Nonce:", authParams.nonce);
-      console.log("QOP:", qop);
-      console.log("NC:", nc);
-      console.log("CNonce:", cnonce);
-      console.log("Algorithm:", authParams.algorithm);
-      console.log("========================");
-
       const response = calculateDigest(
         this.config.sipUsername,
         authParams.realm,
@@ -227,8 +214,6 @@ class SIPClient {
         nc,
         cnonce
       );
-
-      console.log("Calculated digest response:", response);
 
       const authHeader = {
         scheme: "Digest",
