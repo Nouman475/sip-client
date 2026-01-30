@@ -4,7 +4,7 @@ module.exports = {
   extension: "207",             // Extension Number
   sipDomain: "m.sgycm.yeastarcloud.com", // SIP Domain
   sipUsername: "207",           // SIP Username (usually same as extension)
-  sipPassword: "123456",        // SIP Password
+  sipPassword: "475909rmnK",        // SIP Password
   
   // Local Configuration
   localIp: "0.0.0.0",          // Bind to all interfaces

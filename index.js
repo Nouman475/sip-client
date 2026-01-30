@@ -13,7 +13,7 @@ const config = {
   extension: "207",
   sipDomain: "m.sgycm.yeastarcloud.com",
   sipUsername: "207",
-  sipPassword: "Smart@0500",
+  sipPassword: "475909rmnK",
   sipPort: 5060, // Yeastar SIP server port
   // localPort: 5060  // set to bind to a specific port; omit to use ephemeral (like backend)
 };
