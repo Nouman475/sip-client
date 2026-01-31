@@ -110,6 +110,58 @@ class SIPClient {
     this.udpSocket.on("error", (err) => {
       console.error("UDP Socket Error:", err);
     });
+    
+    // Listen for UDP responses
+    this.udpSocket.on("message", (msg, rinfo) => {
+      console.log("=== RECEIVED UDP RESPONSE ===");
+      console.log(`From: ${rinfo.address}:${rinfo.port}`);
+      console.log(msg.toString());
+      console.log("=============================\n");
+      
+      // Parse the response to check if registration was successful
+      const responseStr = msg.toString();
+      if (responseStr.includes("200 OK")) {
+        console.log("✓ Registration successful via UDP!");
+        this.registered = true;
+        
+        // Parse expires from response
+        let expires = this.config.registerExpires;
+        const contactMatch = responseStr.match(/Contact:.*expires=(\d+)/i);
+        const expiresMatch = responseStr.match(/Expires:\s*(\d+)/i);
+        
+        if (contactMatch) {
+          expires = parseInt(contactMatch[1]);
+        } else if (expiresMatch) {
+          expires = parseInt(expiresMatch[1]);
+        }
+        
+        console.log(`✓ Extension ${this.config.extension} is now registered`);
+        console.log(`✓ Registration expires in ${expires} seconds`);
+        
+        // Set up re-registration before expiry
+        if (this.registrationInterval) {
+          clearInterval(this.registrationInterval);
+        }
+
+        const reregisterTime = expires * this.config.reRegisterMultiplier * 1000;
+        console.log(`✓ Will re-register in ${Math.floor(reregisterTime / 1000)} seconds`);
+        console.log("\n>>> SIP Extension is ready and registered! <<<\n");
+
+        this.registrationInterval = setInterval(() => {
+          console.log("\n--- Refreshing registration ---");
+          this.register();
+        }, reregisterTime);
+        
+      } else if (responseStr.includes("401") || responseStr.includes("403")) {
+        console.error("✗ Authentication still failed via UDP");
+        console.error("Check your credentials in config.js");
+      } else if (responseStr.includes("404")) {
+        console.error("✗ Extension not found - check extension number");
+      }
+    });
+    
+    // Bind UDP socket to receive responses
+    this.udpSocket.bind(this.config.localPort);
 
     // Create SIP stack with UDP
     const sipConfig = {
