@@ -1,19 +1,16 @@
 module.exports = {
-  // Extension Configuration (from VoiceInfra form)
-  displayName: "dsd",          // Display Name
-  extension: "207",             // Extension Number
-  sipDomain: "m.sgycm.yeastarcloud.com", // SIP Domain
-  sipUsername: "207",           // SIP Username (extension number)
-  sipPassword: "475909rmnK",        // SIP Password
+  // Extension Configuration
+  displayName: "dsd",
+  extension: "207",
+  sipDomain: "m.sgycm.yeastarcloud.com",
+  sipUsername: "207",
+  sipPassword: "475909rmnK",
   
   // Local Configuration
-  localIp: "0.0.0.0",          // Bind to all interfaces
-  localPort: 5060,              // SIP port
+  localIp: "0.0.0.0",
+  localPort: 5070, // Changed from 5060 to avoid EADDRINUSE
   
   // Registration Settings
-  registerExpires: 3600,        // Registration expiry in seconds (1 hour)
-  reRegisterMultiplier: 0.9,   // Re-register at 90% of expiry time
-  
-  // Optional: Outbound Proxy (if needed)
-  // outboundProxy: "192.168.5.150:5060",
+  registerExpires: 3600,
+  reRegisterMultiplier: 0.9,
 };
