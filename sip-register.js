@@ -1,6 +1,6 @@
 const sip = require("sip");
 const crypto = require("crypto");
-const net = require("net");
+const dgram = require("dgram");
 const config = require("./config");
 
 // Utility functions
@@ -81,7 +81,6 @@ class SIPClient {
     this.registered = false;
     this.viaBranch = generateBranch();
     this.udpSocket = null;
-    this.tcpSocket = null;
     this.sipServerAddress = null;
   }
 
@@ -106,15 +105,10 @@ class SIPClient {
     console.log(`SIP Username: ${this.config.sipUsername}`);
     console.log("================================\n");
 
-    // Create TCP socket for raw SIP message sending
-    this.tcpSocket = new net.Socket();
-    this.tcpSocket.on("error", (err) => {
-      console.error("TCP Socket Error:", err);
-    });
-    this.tcpSocket.on("data", (data) => {
-      console.log("=== RECEIVED TCP DATA ===");
-      console.log(data.toString());
-      console.log("========================\n");
+    // Create UDP socket for raw SIP message sending
+    this.udpSocket = dgram.createSocket("udp4");
+    this.udpSocket.on("error", (err) => {
+      console.error("UDP Socket Error:", err);
     });
 
     // Create SIP stack with TCP
