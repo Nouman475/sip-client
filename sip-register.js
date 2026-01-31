@@ -27,26 +27,45 @@ function calculateDigest(
   nc,
   cnonce,
 ) {
+  // Clean the realm and nonce of any quotes
+  const cleanRealm = realm.replace(/^["']|["']$/g, "");
+  const cleanNonce = nonce.replace(/^["']|["']$/g, "");
+  
+  console.log(`Digest calculation:`);
+  console.log(`  Username: ${username}`);
+  console.log(`  Realm: ${cleanRealm}`);
+  console.log(`  Method: ${method}`);
+  console.log(`  URI: ${uri}`);
+  console.log(`  Nonce: ${cleanNonce}`);
+  
   const ha1 = crypto
     .createHash("md5")
-    .update(`${username}:${realm}:${password}`)
+    .update(`${username}:${cleanRealm}:${password}`)
     .digest("hex");
 
   const ha2 = crypto.createHash("md5").update(`${method}:${uri}`).digest("hex");
 
+  console.log(`  HA1: ${ha1}`);
+  console.log(`  HA2: ${ha2}`);
+
   let response;
-  if (qop) {
+  if (qop && qop.toLowerCase() === 'auth') {
+    const digestString = `${ha1}:${cleanNonce}:${nc}:${cnonce}:${qop}:${ha2}`;
+    console.log(`  Digest string (with qop): ${digestString}`);
     response = crypto
       .createHash("md5")
-      .update(`${ha1}:${nonce}:${nc}:${cnonce}:${qop}:${ha2}`)
+      .update(digestString)
       .digest("hex");
   } else {
+    const digestString = `${ha1}:${cleanNonce}:${ha2}`;
+    console.log(`  Digest string (no qop): ${digestString}`);
     response = crypto
       .createHash("md5")
-      .update(`${ha1}:${nonce}:${ha2}`)
+      .update(digestString)
       .digest("hex");
   }
 
+  console.log(`  Response: ${response}`);
   return response;
 }
 
@@ -221,18 +240,9 @@ class SIPClient {
     if (headers.authorization && headers.authorization[0]) {
       const auth = headers.authorization[0];
 
-      // Remove quotes if they exist (they come from parsed response)
-      const cleanValue = (val) => {
-        if (typeof val === "string") {
-          return val.replace(/^["']|["']$/g, "");
-        }
-        return val;
-      };
+      let authStr = `Authorization: Digest username="${auth.username}", realm="${auth.realm}", nonce="${auth.nonce}", uri="${auth.uri}", response="${auth.response}", algorithm=${auth.algorithm}`;
 
-      let authStr = `Authorization: Digest username="${auth.username}", realm="${cleanValue(auth.realm)}", nonce="${cleanValue(auth.nonce)}", uri="${auth.uri}", response="${auth.response}"`;
-
-      if (auth.algorithm) authStr += `, algorithm=${auth.algorithm}`;
-      if (auth.opaque) authStr += `, opaque="${cleanValue(auth.opaque)}"`;
+      if (auth.opaque) authStr += `, opaque="${auth.opaque}"`;
       if (auth.qop) {
         authStr += `, qop=${auth.qop}, nc=${auth.nc}, cnonce="${auth.cnonce}"`;
       }
@@ -318,21 +328,21 @@ class SIPClient {
       const authHeader = {
         scheme: "Digest",
         username: this.config.sipUsername,
-        realm: authParams.realm,
-        nonce: authParams.nonce,
+        realm: authParams.realm.replace(/^["']|["']$/g, ""), // Clean quotes
+        nonce: authParams.nonce.replace(/^["']|["']$/g, ""), // Clean quotes
         uri: uri,
         response: response,
-        algorithm: (authParams.algorithm || "MD5").toUpperCase(),
+        algorithm: "MD5", // Always use uppercase MD5
       };
 
-      if (qop) {
-        authHeader.qop = qop;
+      if (qop && qop.toLowerCase() === 'auth') {
+        authHeader.qop = "auth";
         authHeader.nc = nc;
         authHeader.cnonce = cnonce;
       }
 
       if (authParams.opaque) {
-        authHeader.opaque = authParams.opaque;
+        authHeader.opaque = authParams.opaque.replace(/^["']|["']$/g, ""); // Clean quotes
       }
 
       headers.authorization = [authHeader];
@@ -410,6 +420,8 @@ class SIPClient {
       if (wwwAuth && wwwAuth[0]) {
         // wwwAuth is an array, get the first element
         const authChallenge = wwwAuth[0];
+        console.log("Raw auth challenge:", authChallenge);
+        
         const authParams = {
           realm: authChallenge.realm,
           nonce: authChallenge.nonce,
@@ -418,9 +430,12 @@ class SIPClient {
           opaque: authChallenge.opaque,
         };
 
-        console.log("Realm:", authParams.realm);
-        console.log("Nonce:", authParams.nonce);
-        console.log("Algorithm:", authParams.algorithm || "MD5");
+        console.log("Parsed auth params:");
+        console.log("  Realm:", authParams.realm);
+        console.log("  Nonce:", authParams.nonce);
+        console.log("  Algorithm:", authParams.algorithm);
+        console.log("  QOP:", authParams.qop);
+        console.log("  Opaque:", authParams.opaque);
         console.log("Re-sending with credentials...");
 
         // Shorter delay for authenticated request since we're using raw UDP now
