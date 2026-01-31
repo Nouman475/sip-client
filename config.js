@@ -3,7 +3,7 @@ module.exports = {
   displayName: "dsd",          // Display Name
   extension: "207",             // Extension Number
   sipDomain: "m.sgycm.yeastarcloud.com", // SIP Domain
-  sipUsername: "207@miqastech.com",           // SIP Username (email format for Yeastar)
+  sipUsername: "207",           // SIP Username (usually same as extension)
   sipPassword: "475909rmnK",        // SIP Password
   
   // Local Configuration

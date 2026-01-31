@@ -1,6 +1,6 @@
 const sip = require("sip");
 const crypto = require("crypto");
-const dgram = require("dgram");
+const net = require("net");
 const config = require("./config");
 
 // Utility functions
@@ -81,6 +81,7 @@ class SIPClient {
     this.registered = false;
     this.viaBranch = generateBranch();
     this.udpSocket = null;
+    this.tcpSocket = null;
     this.sipServerAddress = null;
   }
 
@@ -105,18 +106,24 @@ class SIPClient {
     console.log(`SIP Username: ${this.config.sipUsername}`);
     console.log("================================\n");
 
-    // Create UDP socket for raw SIP message sending
-    this.udpSocket = dgram.createSocket("udp4");
-    this.udpSocket.on("error", (err) => {
-      console.error("UDP Socket Error:", err);
+    // Create TCP socket for raw SIP message sending
+    this.tcpSocket = new net.Socket();
+    this.tcpSocket.on("error", (err) => {
+      console.error("TCP Socket Error:", err);
+    });
+    this.tcpSocket.on("data", (data) => {
+      console.log("=== RECEIVED TCP DATA ===");
+      console.log(data.toString());
+      console.log("========================\n");
     });
 
-    // Create SIP stack
+    // Create SIP stack with TCP
     const sipConfig = {
       port: this.config.localPort,
       address: this.config.localIp,
       publicAddress: this.config.localIp,
       hostname: require("os").hostname(),
+      tcp: true, // Enable TCP
       logger: {
         send: (message, address) => {
           this.sipServerAddress = address; // Store server address for later use
@@ -207,8 +214,8 @@ class SIPClient {
   buildSIPMessage(headers, method, uri) {
     let message = `${method} ${uri} SIP/2.0\r\n`;
 
-    // Via header
-    message += `Via: SIP/2.0/UDP ${headers.via[0].host}:${headers.via[0].port};branch=${headers.via[0].params.branch}\r\n`;
+    // Via header with TCP
+    message += `Via: SIP/2.0/TCP ${headers.via[0].host}:${headers.via[0].port};branch=${headers.via[0].params.branch}\r\n`;
 
     // From header
     message += `From: "${headers.from.name}" <${headers.from.uri}>;tag=${headers.from.params.tag}\r\n`;
@@ -274,10 +281,10 @@ class SIPClient {
         : this.config.localIp;
     const contactUri = `sip:${this.config.sipUsername}@${localIp}:${this.config.localPort}`;
 
-    // Build Via header
+    // Build Via header with TCP
     const viaHeader = {
       version: "2.0",
-      protocol: "UDP",
+      protocol: "TCP",
       host: localIp,
       port: this.config.localPort,
       params: {
@@ -349,32 +356,28 @@ class SIPClient {
 
       headers.authorization = [authHeader];
 
-      // Use raw UDP for authenticated request to bypass sip module bugs
+      // Use TCP for authenticated request
       console.log(`\n=== Sending REGISTER (with auth) ===`);
       console.log(`To: ${this.config.sipUsername}@${this.config.sipDomain}`);
-      console.log(`Via: ${localIp}:${this.config.localPort}`);
+      console.log(`Via: ${localIp}:${this.config.localPort} (TCP)`);
 
       const message = this.buildSIPMessage(headers, "REGISTER", uri);
       console.log("=== SENDING SIP MESSAGE ===");
       console.log(
-        `Raw message to ${this.sipServerAddress.address}:${this.sipServerAddress.port}`,
+        `Raw TCP message to ${this.sipServerAddress.address}:${this.sipServerAddress.port}`,
       );
       console.log(message);
       console.log("===========================\n");
 
-      const messageBuffer = Buffer.from(message);
-      this.udpSocket.send(
-        messageBuffer,
-        0,
-        messageBuffer.length,
-        this.sipServerAddress.port,
-        this.sipServerAddress.address,
-        (err) => {
-          if (err) {
-            console.error("Failed to send authenticated REGISTER:", err);
-          }
-        },
-      );
+      // Connect and send via TCP
+      if (!this.tcpSocket.connecting && !this.tcpSocket.readyState) {
+        this.tcpSocket.connect(this.sipServerAddress.port, this.sipServerAddress.address, () => {
+          console.log("TCP connection established");
+          this.tcpSocket.write(message);
+        });
+      } else {
+        this.tcpSocket.write(message);
+      }
 
       this.cseq++;
       return;
@@ -389,7 +392,7 @@ class SIPClient {
 
     console.log(`\n=== Sending REGISTER (initial) ===`);
     console.log(`To: ${this.config.sipUsername}@${this.config.sipDomain}`);
-    console.log(`Via: ${localIp}:${this.config.localPort}`);
+    console.log(`Via: ${localIp}:${this.config.localPort} (TCP)`);
 
     this.sipStack.send(request, (response) => {
       this.handleRegisterResponse(response, authParams);
@@ -535,6 +538,10 @@ class SIPClient {
 
     if (this.registrationInterval) {
       clearInterval(this.registrationInterval);
+    }
+
+    if (this.tcpSocket) {
+      this.tcpSocket.destroy();
     }
 
     if (this.registered && this.sipStack) {
