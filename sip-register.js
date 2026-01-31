@@ -111,13 +111,12 @@ class SIPClient {
       console.error("UDP Socket Error:", err);
     });
 
-    // Create SIP stack with TCP
+    // Create SIP stack with UDP
     const sipConfig = {
       port: this.config.localPort,
       address: this.config.localIp,
       publicAddress: this.config.localIp,
       hostname: require("os").hostname(),
-      tcp: true, // Enable TCP
       logger: {
         send: (message, address) => {
           this.sipServerAddress = address; // Store server address for later use
@@ -208,8 +207,8 @@ class SIPClient {
   buildSIPMessage(headers, method, uri) {
     let message = `${method} ${uri} SIP/2.0\r\n`;
 
-    // Via header with TCP
-    message += `Via: SIP/2.0/TCP ${headers.via[0].host}:${headers.via[0].port};branch=${headers.via[0].params.branch}\r\n`;
+    // Via header with UDP
+    message += `Via: SIP/2.0/UDP ${headers.via[0].host}:${headers.via[0].port};branch=${headers.via[0].params.branch}\r\n`;
 
     // From header
     message += `From: "${headers.from.name}" <${headers.from.uri}>;tag=${headers.from.params.tag}\r\n`;
@@ -275,10 +274,10 @@ class SIPClient {
         : this.config.localIp;
     const contactUri = `sip:${this.config.sipUsername}@${localIp}:${this.config.localPort}`;
 
-    // Build Via header with TCP
+    // Build Via header with UDP
     const viaHeader = {
       version: "2.0",
-      protocol: "TCP",
+      protocol: "UDP",
       host: localIp,
       port: this.config.localPort,
       params: {
@@ -350,55 +349,32 @@ class SIPClient {
 
       headers.authorization = [authHeader];
 
-      // Use TCP for authenticated request
+      // Use UDP for authenticated request
       console.log(`\n=== Sending REGISTER (with auth) ===`);
       console.log(`To: ${this.config.sipUsername}@${this.config.sipDomain}`);
-      console.log(`Via: ${localIp}:${this.config.localPort} (TCP)`);
+      console.log(`Via: ${localIp}:${this.config.localPort} (UDP)`);
 
       const message = this.buildSIPMessage(headers, "REGISTER", uri);
       console.log("=== SENDING SIP MESSAGE ===");
       console.log(
-        `Raw TCP message to ${this.sipServerAddress.address}:${this.sipServerAddress.port}`,
+        `Raw UDP message to ${this.sipServerAddress.address}:${this.sipServerAddress.port}`,
       );
       console.log(message);
       console.log("===========================\n");
 
-      // Create a new TCP connection for each authenticated request
-      const tcpClient = new net.Socket();
-      
-      tcpClient.on("connect", () => {
-        console.log("TCP connection established for auth request");
-        tcpClient.write(message);
-      });
-      
-      tcpClient.on("data", (data) => {
-        console.log("=== RECEIVED TCP AUTH RESPONSE ===");
-        console.log(data.toString());
-        console.log("=================================\n");
-        
-        // Parse the response to check if registration was successful
-        const responseStr = data.toString();
-        if (responseStr.includes("200 OK")) {
-          console.log("✓ Registration successful via TCP!");
-          this.registered = true;
-        } else if (responseStr.includes("401") || responseStr.includes("403")) {
-          console.error("✗ Authentication still failed via TCP");
-        }
-        
-        tcpClient.end();
-      });
-      
-      tcpClient.on("error", (err) => {
-        console.error("TCP Auth Socket Error:", err);
-        tcpClient.destroy();
-      });
-      
-      tcpClient.on("close", () => {
-        console.log("TCP auth connection closed");
-      });
-      
-      // Connect to server
-      tcpClient.connect(this.sipServerAddress.port, this.sipServerAddress.address);
+      const messageBuffer = Buffer.from(message);
+      this.udpSocket.send(
+        messageBuffer,
+        0,
+        messageBuffer.length,
+        this.sipServerAddress.port,
+        this.sipServerAddress.address,
+        (err) => {
+          if (err) {
+            console.error("Failed to send authenticated REGISTER:", err);
+          }
+        },
+      );
 
       this.cseq++;
       return;
@@ -413,7 +389,7 @@ class SIPClient {
 
     console.log(`\n=== Sending REGISTER (initial) ===`);
     console.log(`To: ${this.config.sipUsername}@${this.config.sipDomain}`);
-    console.log(`Via: ${localIp}:${this.config.localPort} (TCP)`);
+    console.log(`Via: ${localIp}:${this.config.localPort} (UDP)`);
 
     this.sipStack.send(request, (response) => {
       this.handleRegisterResponse(response, authParams);
@@ -559,10 +535,6 @@ class SIPClient {
 
     if (this.registrationInterval) {
       clearInterval(this.registrationInterval);
-    }
-
-    if (this.tcpSocket) {
-      this.tcpSocket.destroy();
     }
 
     if (this.registered && this.sipStack) {
