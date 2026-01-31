@@ -369,15 +369,42 @@ class SIPClient {
       console.log(message);
       console.log("===========================\n");
 
-      // Connect and send via TCP
-      if (!this.tcpSocket.connecting && !this.tcpSocket.readyState) {
-        this.tcpSocket.connect(this.sipServerAddress.port, this.sipServerAddress.address, () => {
-          console.log("TCP connection established");
-          this.tcpSocket.write(message);
-        });
-      } else {
-        this.tcpSocket.write(message);
-      }
+      // Create a new TCP connection for each authenticated request
+      const tcpClient = new net.Socket();
+      
+      tcpClient.on("connect", () => {
+        console.log("TCP connection established for auth request");
+        tcpClient.write(message);
+      });
+      
+      tcpClient.on("data", (data) => {
+        console.log("=== RECEIVED TCP AUTH RESPONSE ===");
+        console.log(data.toString());
+        console.log("=================================\n");
+        
+        // Parse the response to check if registration was successful
+        const responseStr = data.toString();
+        if (responseStr.includes("200 OK")) {
+          console.log("✓ Registration successful via TCP!");
+          this.registered = true;
+        } else if (responseStr.includes("401") || responseStr.includes("403")) {
+          console.error("✗ Authentication still failed via TCP");
+        }
+        
+        tcpClient.end();
+      });
+      
+      tcpClient.on("error", (err) => {
+        console.error("TCP Auth Socket Error:", err);
+        tcpClient.destroy();
+      });
+      
+      tcpClient.on("close", () => {
+        console.log("TCP auth connection closed");
+      });
+      
+      // Connect to server
+      tcpClient.connect(this.sipServerAddress.port, this.sipServerAddress.address);
 
       this.cseq++;
       return;
