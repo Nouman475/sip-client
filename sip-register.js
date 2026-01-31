@@ -49,8 +49,8 @@ function calculateDigest(
   console.log(`  HA2: ${ha2}`);
 
   let response;
-  if (qop && qop.toLowerCase() === 'auth') {
-    const digestString = `${ha1}:${cleanNonce}:${nc}:${cnonce}:${qop}:${ha2}`;
+  if (qop && (qop.toLowerCase() === 'auth' || qop.replace(/"/g, '').toLowerCase() === 'auth')) {
+    const digestString = `${ha1}:${cleanNonce}:${nc}:${cnonce}:auth:${ha2}`;
     console.log(`  Digest string (with qop): ${digestString}`);
     response = crypto
       .createHash("md5")
@@ -312,6 +312,8 @@ class SIPClient {
       const nc = "00000001";
       const cnonce = generateTag();
       const qop = authParams.qop || null;
+      console.log(`QOP raw value: "${qop}"`);
+      console.log(`QOP cleaned: "${qop ? qop.replace(/"/g, '') : 'null'}"`);
 
       const response = calculateDigest(
         this.config.sipUsername,
@@ -335,7 +337,7 @@ class SIPClient {
         algorithm: "MD5", // Always use uppercase MD5
       };
 
-      if (qop && qop.toLowerCase() === 'auth') {
+      if (qop && (qop.toLowerCase() === 'auth' || qop.replace(/"/g, '').toLowerCase() === 'auth')) {
         authHeader.qop = "auth";
         authHeader.nc = nc;
         authHeader.cnonce = cnonce;
