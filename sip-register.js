@@ -54,6 +54,7 @@ class SIPClient {
     const sipConfig = {
       port: this.config.localPort,
       address: this.config.localIp,
+      publicAddress: this.config.publicAddress,
       logger: {
         send: (msg, address) => console.log(`>>> Sending to ${address.address}:${address.port}`),
         recv: (msg, address) => console.log(`<<< Received from ${address.address}:${address.port}`),
@@ -78,7 +79,8 @@ class SIPClient {
 
   register(authPacket = null) {
     const uri = `sip:${this.config.sipDomain}`;
-    const localIp = this.config.localIp === "0.0.0.0" ? this.getLocalIp() : this.config.localIp;
+    // const localIp = this.config.localIp === "0.0.0.0" ? this.getLocalIp() : this.config.localIp;
+    const localIp = this.config.publicAddress
     
     const request = {
       method: "REGISTER",
@@ -93,7 +95,7 @@ class SIPClient {
         "call-id": this.callId,
         cseq: { method: "REGISTER", seq: this.cseq++ },
         via: [],
-        contact: [{ uri: `sip:${this.config.sipUsername}@${localIp}:${this.config.localPort}` }],
+        contact: [{ uri: `sip:${this.config.sipUsername}@${this.config.publicAddress}:${this.config.localPort}` }],
         expires: this.config.registerExpires,
         "max-forwards": 70,
         "user-agent": "NodeJS-SIP-Client"

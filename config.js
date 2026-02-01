@@ -13,4 +13,5 @@ module.exports = {
   // Registration Settings
   registerExpires: 3600,
   reRegisterMultiplier: 0.9,
+  publicAddress: "103.49.138.248",
 };
